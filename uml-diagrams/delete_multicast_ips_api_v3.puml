@@ -1,0 +1,68 @@
+@startuml
+
+title Add Multicast IP Addresses API Flow
+
+actor "User" as user
+box "client service"
+participant "MulticastIpConfigurationController" as mcc
+participant "MulticastIpConfigService" as mcs
+participant "MulticastIpConfigRequestValidator" as mcv
+participant "MultiCastIpConfig\nRepository" as mcr
+participant "ClientConfig\nVersionRepository" as cvr
+participant "MulticastIp\nConfigMapper" as mcm
+participant "ExceptionHandler" as eh
+end box
+participant "Shadow \nDevice" as sd
+database "RDS \nmulti_cast\n_ip_config" as table
+database "RDS \nclient_configurations\n_versions" as table2
+
+group Add multicast ip from cleo
+	user -> mcc ++: DELETE /api/v1/client-multicast-ips/tenant/{tenantId}
+	note left: {\n "ipAddresses":["224.0.0.1", "224.0.0.2"]\n}
+	alt #LightBlue no exception
+	    mcc -> mcv ++: validateDeleteMulticastIpPayload(deleteMulticastIpRequest)\npayload shouldn't be empty
+	    mcv -> mcc --: void
+	    mcc -> mcs ++: deleteMulticastIps(tenantId, deleteMulticastIpRequest)
+	    mcs -> mcr ++ : findByTenantIdAndIpAddresses(tenantId, requestedIpAddresses)
+	    mcr --> table ++: query
+	    table --> mcr --: result
+	    mcr -> mcs -- : List<MultiCastIpConfigEntity>
+      loop #White multicastIpConfigEntities.size() times
+        alt status== AUTH_DENIED
+          mcs-> mcs : shouldMulticastIpConfigVersionChange = true
+        end
+      end
+    alt #White withinOneTransaction\nupdateDbAndNetworkResources(multicastIpConfigEntities,shouldMulticastIpConfigVersionChange)
+      mcs -> mcr ++:deleteAll(multicastIpConfigEntities)
+      mcr --> table ++: delete
+      table --> mcr --: entries deleted
+      mcr -> mcs : void
+      alt shouldMulticastIpConfigVersionChange
+        mcs -> cvr ++: findByTenantId(tenantId)
+        cvr --> table2 ++: query
+        table2 --> cvr --: result
+        cvr -> mcs --: Optional<ClientConfigVersion>
+        mcs -> sd ++: shadowRepository.listVersions(filterQuery)
+        note left: {\n"tenantId":tenantId,\n"name":"multicast_ip_deny_list"\n}
+        sd -> mcs --: ElementStateResponse
+        mcs -> mcs : getLatestVersion\n ElementStateVersionDTO
+        mcs -> mcs : getIncremented version
+        mcs -> sd ++: updateNewVersion
+        sd -> mcs --:
+        mcs -> cvr ++: updateNewVersion
+        cvr --> table2 ++: update
+        table2 --> cvr --: updated entry
+        cvr -> mcs --:
+      end
+    end
+    mcs -> mcs : from List<MultiCastIpConfigEntity>\nto List<String(IpAddress)>
+    mcs -> mcc --: DeleteMulticastIpResponse(list of ipAddresses)
+	else #Orange exception
+    mcs --> eh ++: handleException
+    eh -> mcc --: DeleteMulticastIpResponse(error)
+  end
+  mcc -> user --: ResponseEntity
+	note left: {\n"data": "ipAddresses: ["224.0.0.1", "224.0.0.2"] deleted successfully"\n"error": {\n "statusCode": 500,\n "status": "INTERNAL_SERVER_ERROR",\n "message": "error message"\n }\n}
+end
+
+@enduml

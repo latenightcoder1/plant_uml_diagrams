@@ -1,0 +1,48 @@
+@startuml
+
+title Multi Cast IP Addresses APIs Flow
+
+actor "User" as user
+participant "Client \nService" as cs
+database "RDS \nmulti_cast_ip_config" as table
+database "RDS \nclient_configurations_versions" as table2
+participant "Shadow \nDevice" as sd
+
+group Approve/Deny multicast ip from cleo
+	user -> cs ++: PUT /client/api/v1/{tenantId}/multi-cast-ips
+	note left: [{\n "ipAddress":"224.0.0.1",\n "macAddress":"01:00:5E:7F:FF:FA",\n "tenantId":"abc-xyz-t65",\n "action":"APPROVED",\n "source": "User",\n "siteId": "123",\n "buildingId": "123",\n "floorId": "123",\n "zoneId": "123",\n "segmentId": "123",\n "deviceId": "134",\n "headendSerialNumber": "123",\n "clientType": "wireless"\n},\n{\n "ipAddress":"224.0.0.2",\n "macAddress":"01:00:5E:7F:FF:FX",\n "tenantId":"abc-xyz-t65",\n "action":"AUTH_DENIED",\n "source": "User",\n "siteId": "123",\n "buildingId": "123",\n "floorId": "123",\n "zoneId": "123",\n "segmentId": "123",\n "deviceId": "134",\n "headendSerialNumber": "123",\n "clientType": "wired"\n}]
+	alt #LightBlue no exception
+        cs -> cs : validate payload-\n1) tenantId must match\n2) ipAddress\n3) macAddress\n4) action
+    	cs -> cs : enrich every entry from payload-\n1) timestamp\n2) source as "User"
+    	cs -> cs : map List<multiCastIpConfigDTO> to List<MultiCastIpConfigEntity>
+    	cs -> table ++: multiCastIpConfigRepository.saveAll(multiCastIpConfigEntities)
+    	table -> cs --: List<MultiCastIpConfigEntity>
+    	cs -> table2 ++: clientConfigVersionRepository.findByTenantId(tenantId)
+    	table2 -> cs --: Optional<ClientConfigVersion>
+    	cs -> cs : update clientConfigVersion
+    	cs -> cs : map ClientConfigVersion to ElementStateVersionDTO
+    	cs -> sd ++: shadowRepository.updateVersion(stateVersion)
+    	sd -> cs --: ElementStateVersionDTO
+    	cs -> table2 ++: clientConfigVersionRepository.save(clientConfigVersion)
+        table2 -> cs --: ClientConfigVersion
+    else #Orange exception
+        cs -> cs : map exception to \nerror
+    end
+	cs -> user --: MultiCastIpResponse
+	note left: {\n"data":{\n"items":\n[{\n "ipAddress":"224.0.0.1",\n "macAddress":"01:00:5E:7F:FF:FA",\n "tenantId":"abc-xyz-t65",\n "action":"AUTH_DENIED",\n "source": "User",\n "siteId": "123",\n "buildingId": "123",\n "floorId": "123",\n "zoneId": "123",\n "segmentId": "123",\n "deviceId": "134",\n "headendSerialNumber": "123",\n "clientType": "wireless"\n},\n{\n "ipAddress":"224.0.0.2",\n "macAddress":"01:00:5E:7F:FF:FX",\n "tenantId":"abc-xyz-t65",\n "action":"AUTH_DENIED",\n "source": "User",\n "siteId": "123",\n "buildingId": "123",\n "floorId": "123",\n "zoneId": "123",\n "segmentId": "123",\n "deviceId": "134",\n "headendSerialNumber": "123",\n "clientType": "wired"\n}],\n"count": 2,\n"offset": 0,\n "limit": 2\n},\n"error": {\n "statusCode": 500,\n "status": "INTERNAL_SERVER_ERROR",\n "message": "error message"\n }\n}
+end
+
+group Get complete multicast ip details against ip address
+	user -> cs ++: GET /client/api/v1/{tenantId}/multi-cast-ips/{ipAddress}
+	alt #LightBlue no exception
+	    cs -> table ++: multiCastIpConfigRepository.findByTenantIdAndIpAddress(tenantId, ipAddress)
+        table -> cs --: Optional<MultiCastIpConfigEntity>
+        cs -> cs : map MultiCastIpConfigEntity to MultiCastIpConfigDTO
+    else #Orange exception
+        cs -> cs : map exception to \nerror
+    end
+	cs -> user --: MultiCastIpResponse
+    note left: {\n "data":\n {\n "ipAddress":"224.0.0.1",\n "macAddress":"01:00:5E:7F:FF:FA",\n "tenantId":"abc-xyz-t65",\n "action":"AUTH_DENIED",\n "source": "User",\n "siteId": "123",\n "buildingId": "123",\n "floorId": "123",\n "zoneId": "123",\n "segmentId": "123",\n "deviceId": "134",\n "headendSerialNumber": "123",\n "clientType": "wireless"\n},\n "error": {\n "statusCode": 500,\n "status": "INTERNAL_SERVER_ERROR",\n "message": "error message"\n }\n}
+end
+
+@enduml

@@ -1,0 +1,53 @@
+@startuml
+
+title Multi Cast IP Addresses RPCs Flow
+
+participant "Headend" as headend
+participant "Client \nService" as cs
+participant "Shadow \nDevice" as sd
+database "RDS \nmulti_cast_ip_config" as table
+
+group Get Deny List Flow
+	headend -> cs ++: rpc GetMultiCastIpDenyList(MultiCastIpDenyListRequest)
+	note left: message MultiCastIpDenyListRequest {\n}
+	alt #LightBlue no exception
+	    cs -> sd ++: shadowRepository.getDeviceDTO(certId)
+	    sd -> cs --: DeviceDTO
+	    cs -> table ++: multiCastIpConfigRepository.findAll(tenantId,"AUTH_DENIED")
+	    table -> cs --: List<MultiCastIpConfigEntity>
+	    cs -> cs : map List<MultiCastIpConfigEntity> to \nList<MultiCastIpAddress>
+	else #Orange exception
+	    cs -> cs : map exception to \nerror
+	end
+	cs -> headend --: message MultiCastIpResponse
+	note left: message MultiCastIpResponse {\nrepeated MultiCastIpAddress multi_cast_ip_address = 1;\nError error =2;\n}\n\nmessage MultiCastIpAddress {\nstring ip_address = 1;\nstring mac_address = 2;\nstring tenant_id = 3;\nstring source = 4;\nstring site_id = 5;\nstring building_id = 6;\nstring zone_id = 7;\nstring segment_id = 8;\nstring floor_id = 9;\nstring device_id = 10;\nstring headend_serial_number = 11;\nstring timestamp = 12;\nstring client_type = 13;\nstring action = 14;\n}\n\nmessage Error {\nstring message = 1;\nstring status = 2;\nint status_code = 3;\n}
+end
+
+group Self Learned Flow
+	headend -> cs ++: rpc AddMulticastIp(MultiCastIpRequest)
+	note left: message MultiCastIpRequest {\nrepeated MultiCastIpAddress multi_cast_ip_address = 1;\n}\n\nmessage MultiCastIpAddress {\nstring ip_address = 1;\nstring mac_address = 2;\nstring tenant_id = 3;\nstring source = 4;\nstring site_id = 5;\nstring building_id = 6;\nstring zone_id = 7;\nstring segment_id = 8;\nstring floor_id = 9;\nstring device_id = 10;\nstring headend_serial_number = 11;\nstring timestamp = 12;\nstring client_type = 13;\nstring action = 14;\n}
+    alt no exception
+        cs -> cs : validate mandatory fields from payload-\n1)ip_address should be valid\n2)mac_address shouldn't be null
+        cs -> sd ++: shadowRepository.getDeviceDTO(certId)
+	    sd -> cs --: DeviceDTO
+	    cs -> table ++: multiCastIpConfigRepository.findAll(tenantId)
+	    table -> cs --: List<MultiCastIpConfigEntity>
+	    cs -> cs : Set<String> getMultiCastIpAddresses(multiCastIpConfigEntities)
+	        loop MultiCastIpRequest.multi_cast_ip_addressList().size() times
+                alt #LightBlue !set.contains(multi_cast_ip_address)
+                    cs -> cs : enrich multi_cast_ip_address-\n1) add timestamp if not available\n2) add source as "Headend"\n3) add action as "Approved"
+                    cs -> cs : void populateToBeInsertedList(multi_cast_ip_address, List<MultiCastIpConfigEntity> entries)
+                end
+            end
+        alt #LightBlue !entries.isEmpty()
+            cs -> table ++: multiCastIpConfigRepository.saveAll(entries)
+        end
+        cs -> cs : map entries to List<MultiCastIpAddress>
+    else #Orange exception
+        cs -> cs : map exception to \nerror
+    end
+	cs -> headend --: message MultiCastIpResponse
+	note left: message MultiCastIpResponse {\nrepeated MultiCastIpAddress multi_cast_ip_address = 1;\nError error =2;\n}\n\nmessage MultiCastIpAddress {\nstring ip_address = 1;\nstring mac_address = 2;\nstring tenant_id = 3;\nstring source = 4;\nstring site_id = 5;\nstring building_id = 6;\nstring zone_id = 7;\nstring segment_id = 8;\nstring floor_id = 9;\nstring device_id = 10;\nstring headend_serial_number = 11;\nstring timestamp = 12;\nstring client_type = 13;\nstring action = 14;\n}\n\nmessage Error {\nstring message = 1;\nstring status = 2;\nint status_code = 3;\n}
+end
+
+@enduml

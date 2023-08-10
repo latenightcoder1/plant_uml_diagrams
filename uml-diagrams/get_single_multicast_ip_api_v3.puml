@@ -1,0 +1,34 @@
+@startuml
+
+title Get Single Multicast IP details API Flow
+
+actor "User" as user
+box "client service"
+participant "MulticastIpConfigurationController" as mcc
+participant "MulticastIpConfigService" as mcs
+participant "MultiCastIpConfig\nRepository" as mcr
+participant "MulticastIp\nConfigMapper" as mcm
+participant "ExceptionHandler" as eh
+end box
+database "RDS \nmulti_cast\n_ip_config" as table
+
+group Get Single Multicast IP detail from cleo
+	user -> mcc ++: GET /api/v1/client-multicast-ips/tenant/{tenantId}/ipAddress/{ipAddress}
+	alt #LightBlue no exception
+	    mcc -> mcs ++: getMulticastIpDetails(tenantId, ipAddress)
+	    mcs -> mcr ++ : findByTenantIdAndIpAddress(tenantId, ipAddress)
+	    mcr --> table ++: query
+	    table --> mcr --: result
+	    mcr -> mcs -- : Optional<MultiCastIpConfigEntity>
+	    mcs -> mcm ++: mapMulticastIpConfigEntityToMulticastIpConfigDTO(multicastIpConfigEntity)
+	    mcm -> mcs --: MulticastIpConfigDTO
+      mcs -> mcc --: MultiCastIpResponse(data)
+	else #Orange exception
+    mcs --> eh ++: handleException
+    eh -> mcc --: MultiCastIpResponse(error)
+  end
+  mcc -> user --: ResponseEntity
+	note left: {\n"data":{\n "ipAddress":"224.0.0.1",\n "macAddress":"01:00:5E:7F:FF:FA",\n "tenantId":"abc-xyz-t65",\n "status":"AUTH_DENIED",\n "sourceOfAction": "User",\n "siteId": "123",\n "buildingId": "123",\n "floorId": "123",\n "zoneId": "123",\n "deviceId": "134",\n "headendSerialNumber": "123",\n "clientType": "wireless",\n "createdTimeMillis": 1684856763411,\n "updatedTimeMillis": 1684856763411,\n "serviceName": "serviceName",\n "l4Port": "80"\n},\n"error": {\n "statusCode": 500,\n "status": "INTERNAL_SERVER_ERROR",\n "message": "error message"\n }\n}
+end
+
+@enduml

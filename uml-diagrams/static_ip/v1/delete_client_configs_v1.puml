@@ -1,0 +1,66 @@
+@startuml
+
+title Delete Client configs API Flow
+
+actor "User" as user
+box "client service"
+participant "ClientConfigController" as ccc
+participant "ClientConfigService" as ccs
+participant "ClientConfig\nRepository" as ccr
+participant "StaticIpAllowList\nProcessor" as siap
+participant "ClientConfig\nVersionRepository" as cvr
+end box
+participant "Shadow \nDevice" as sd
+database "RDS \nclient_config" as table
+database "RDS \nclient_configurations\n_versions" as table2
+
+group Delete client configs
+	user -> ccc ++: DELETE /api/v1/client-configs
+	note left: {\n"macsList":\n["01:00:5E:7F:FF:FA", "01:00:5E:7F:FF:FB"]\n}
+	ccc -> ccs ++: deleteClientConfig(tenantId, clientDeleteRequestDTO)
+	loop #White clientDeleteRequestDTO.getMacsList().size() times
+    ccs -> ccr ++: findById(tenantId + '-' + mac)
+    ccr --> table ++: query
+    table --> ccr --: result
+    ccr -> ccs --: Optional<ClientEntity>
+    ccs -> ccs : -------\nexisting logic\n-------
+    alt #LightBlue !staticIpAllowListChange &&\n Boolean.TRUE.equals(clientEntity.isStaticIp())
+      ccs-> ccs : staticIpAllowListChange=true\npublishEvent(ActionEvent(STATIC_APPROVE_LIST_CHANGE, tenantId))
+    end
+  end
+  ccs -> ccr ++: deleteAll(clientEntities)
+  ccr --> table ++: delete
+  table --> ccr --: entries deleted
+  ccr -> ccs --
+  ccs -> ccs : -------\nexisting logic\n-------
+  ccs -> ccc --:
+  ccc -> user --: ResponseEntity<Void>
+end
+
+group onApplicationEvent : actionEvent.getName().equals("STATIC_APPROVE_LIST_CHANGE")
+  alt #LightBlue no exception
+    ccs--> siap : processStaticIpAllowListChange(actionEvent.getTenantId())
+  else #Orange exception
+    siap --> siap : Repeat processStaticIpAllowListChange(actionEvent.getTenantId())\nmax 3 times
+  end
+end
+
+group #Yellow processStaticIpAllowListChange
+  siap -> cvr ++: findByTenantId(tenantId)
+  cvr --> table2 ++: query
+  table2 --> cvr --: result
+  cvr -> siap --: Optional<ClientConfigVersion>
+  siap -> sd ++: shadowRepository.listVersions(filterQuery)
+  note left: {\n"tenantId":tenantId,\n"name":"static_approve_list"\n}
+   sd -> siap --: ElementStateResponse
+   siap -> siap : getLatestVersion\n ElementStateVersionDTO
+   siap -> siap : getIncremented version
+   siap -> cvr ++: updateNewVersion
+   cvr --> table2 ++: update
+   table2 --> cvr --: entries updated
+   cvr -> siap --:
+   siap -> sd ++: updateNewVersion
+   sd -> siap --:
+end
+
+@enduml

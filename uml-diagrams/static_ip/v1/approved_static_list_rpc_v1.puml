@@ -1,0 +1,35 @@
+@startuml
+
+title Get approved static list RPC Flow
+
+participant "Headend" as headend
+box "client service"
+participant "StaticIpRpc\nServiceImpl" as srsi
+participant "ClientConfig\nRepository" as ccr
+participant "Client\nConfigMapper" as ccm
+end box
+participant "Shadow \nDevice" as sd
+database "RDS \nclient_config" as table
+
+group Get approved static list
+	headend -> srsi ++: rpc GetApprovedStaticList(ApprovedStaticListRequest)
+	note left: message ApprovedStaticListRequest {\n}
+	alt #LightBlue no exception
+	  srsi -> sd ++: shadowRepository.getDeviceDTO(certificateId)
+	  sd -> srsi --: DeviceDTO
+	  srsi -> ccr ++: findAllWithStaticIpTrue(tenantId)
+	  ccr -> table ++: query
+	  table -> ccr --: result
+	  ccr -> srsi --: List<ClientEntity>
+	  loop clientConfigEntities.size() times
+	    srsi -> ccm ++: mapClientConfigEntity\nToApprovedStaticResponse(clientEntity)
+	    ccm -> srsi --: ApprovedStaticResponse
+	  end
+	else #Orange exception
+	    srsi -> srsi : map exception to \nerror
+	end
+	srsi -> headend --: message ApprovedStaticListResponse
+	note left: message ApprovedStaticListResponse {\nrepeated ApprovedStaticResponse approved_static_response = 1;\nError error =2;\n}\n\nmessage ApprovedStaticResponse {\nstring ip_address = 1;\nstring mac_address = 2;\n}\n\nmessage Error {\nstring message = 1;\nstring status = 2;\nint status_code = 3;\n}
+end
+
+@enduml

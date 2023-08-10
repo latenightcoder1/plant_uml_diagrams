@@ -1,0 +1,40 @@
+@startuml
+
+title Get Multicast IPs details API Flow
+
+actor "User" as user
+box "client service"
+participant "MulticastIpConfigurationController" as mcc
+participant "PageDetailsResolver" as pdr
+participant "MulticastIpConfigService" as mcs
+participant "MultiCastIpConfig\nRepository" as mcr
+participant "MulticastIp\nConfigMapper" as mcm
+participant "ExceptionHandler" as eh
+end box
+database "RDS \nmulti_cast\n_ip_config" as table
+
+group Get multicast ip from cleo
+	user -> mcc ++: GET /api/v1/client-multicast-ips/tenant/{tenantId}\n?status=Allowed&l4Port=8094&protocol=TCP\n&ipAddress=224.0.0.2&page=0&size=5
+	alt #LightBlue no exception
+	    mcc -> pdr ++: resolvePageDetails(page, size)
+	    pdr -> mcc --: Pageable
+	    mcc -> mcs ++: getMulticastIps(tenantId, filterQuery, pageable)
+	    mcs -> mcs : prepareSpecification(tenantId, filterQuery)\nSpecification<MulticastIpConfigEntity>
+	    mcs -> mcr ++ : findAll(specification, pageable)
+	    mcr --> table ++: query
+	    table --> mcr --: result
+	    mcr -> mcs -- : List<MultiCastIpConfigEntity>
+      loop #White multicastIpConfigDTOs.size() times
+        mcs -> mcm ++: mapMulticastIpConfigEntityToMulticastIpConfigDTO(multicastIpConfigEntity)
+        mcm -> mcs --: MulticastIpConfigDTO
+      end
+    mcs -> mcc --: MultiCastIpsResponse(data)
+	else #Orange exception
+    mcs --> eh ++: handleException
+    eh -> mcc --: MultiCastIpsResponse(error)
+  end
+  mcc -> user --: ResponseEntity
+	note left: {\n"data":{\n"items":\n[{\n "id":"abc-xyz-t65-01:00:5E:7F:FF:FA-80-tcp",\n "ipAddress":"224.0.0.1",\n "macAddress":"01:00:5E:7F:FF:FA",\n "tenantId":"abc-xyz-t65",\n "status":"Denied",\n "sourceOfAction": "User",\n "siteId": "123",\n "buildingId": "123",\n "floorId": "123",\n "zoneId": "123",\n "deviceId": "134",\n "headendSerialNumber": "123",\n "clientType": "wireless",\n "createdTimeMillis": 1684856763411,\n "updatedTimeMillis": 1684856763411,\n "serviceName": "serviceName",\n "l4Port": "80",\n "protocol": "TCP"\n},\n{\n"id":"abc-xyz-t65-01:00:5E:7F:FF:FA-81-tcp",\n "ipAddress":"224.0.0.2",\n "macAddress":"01:00:5E:7F:FF:FA",\n "tenantId":"abc-xyz-t65",\n "status":"Denied",\n "sourceOfAction": "User",\n "siteId": "123",\n "buildingId": "123",\n "floorId": "123",\n "zoneId": "123",\n "deviceId": "134",\n "headendSerialNumber": "123",\n "clientType": "wireless",\n "createdTimeMillis": 1684856763411,\n "updatedTimeMillis": 1684856763411,\n "serviceName": "serviceName",\n "l4Port": "81",\n "protocol": "TCP"\n}],\n"count": 2,\n"offset": 0,\n "limit": 2\n},\n"error": {\n "statusCode": 500,\n "status": "INTERNAL_SERVER_ERROR",\n "message": "error message"\n }\n}
+end
+
+@enduml

@@ -1,0 +1,35 @@
+@startuml
+
+title Get Multicast IP Deny List RPC Flow
+
+participant "Headend" as headend
+box "client service"
+participant "MulticastIpRpc\nServiceImpl" as mrsi
+participant "MultiCastIpConfig\nRepository" as mcr
+participant "MulticastIp\nConfigMapper" as mcm
+end box
+participant "Shadow \nDevice" as sd
+database "RDS \nmulti_cast_ip_config" as table
+
+group Get Deny List Flow
+	headend -> mrsi ++: rpc GetMultiCastIpDenyList(MultiCastIpDenyListRequest)
+	note left: message MultiCastIpDenyListRequest {\n}
+	alt #LightBlue no exception
+	    mrsi -> sd ++: shadowRepository.getDeviceDTO(certificateId)
+	    sd -> mrsi --: DeviceDTO
+	    mrsi -> mcr ++: findAll(tenantId,"AUTH_DENIED")
+	      mcr -> table ++: query
+	      table -> mcr --: result
+	    mcr -> mrsi --: List<MultiCastIpConfigEntity>
+	    loop multicastIpConfigEntities.size() times
+	    mrsi -> mcm ++: mapMulticastIpConfigEntity\nToMulticastIpResponse(multicastIpConfigEntity)
+	    mcm -> mrsi --: MulticastIpResponse
+	    end
+	else #Orange exception
+	    mrsi -> mrsi : map exception to \nerror
+	end
+	mrsi -> headend --: message MultiCastIpsResponse
+	note left: message MultiCastIpsResponse {\nrepeated MultiCastIpResponse multicast_ip_response = 1;\nError error =2;\n}\n\nmessage MultiCastIpResponse {\nstring ip_address = 1;\nstring mac_address = 2;\nstring source_of_action = 3;\nstring client_type = 4;\nstring status = 5;\nstring service_name = 6;\nstring l4_port = 7;\n}\n\nmessage Error {\nstring message = 1;\nstring status = 2;\nint status_code = 3;\n}
+end
+
+@enduml

@@ -1,0 +1,62 @@
+@startuml
+!include <elastic/elasticsearch/elasticsearch>
+
+title Primary BN Auto-reconnect\n N (RNs) Workflows\n
+
+participant "DeviceMessageListener\n>>onDeviceMessage\n(String message,\n Acknowledgment acknowledgment)" as dml
+participant "PrimaryBnReconnect\nProcessor" as pbrp
+participant "SWF\ndomain=device-config-*" as swf
+participant "SetDeviceConfig\nWorkflowImpl" as workflowThread
+participant "SetDeviceConfig\nActivitiesImpl" as taskThread
+participant "DeviceConfig\nWorkflowComponent" as dcwc
+participant "AdvancedConfig\nDbRepository" as acdr
+participant "AdvancedOperation\nDbRepository" as aodr
+participant "NetworkInfoService\nRepository" as nisr
+participant "DeviceOperations\nRepository" as dor
+participant "EventLogger" as el
+
+
+group reconnectRns
+	dml -> pbrp ++: reconnectRns(String serialNumber)
+		pbrp -> pbrp : basic validation\nincluding device state etc
+		pbrp -> pbrp : createConfigDetailsMap()
+		note left: Map.of("/radios/global/config/reset",\nConfigDetails(appliedAt="ApplicableTarget.SELF"\n,PathValue=PathValue(value=2, valueType=INT))
+		pbrp -> nisr ++ : get all the rns against a primary bn and not connected to it
+		nisr -> pbrp -- : List<DeviceDetails> rnDetailsList
+		loop rnDetailsList.size() times
+		    pbrp -> el : logEvent("SET_CONFIG_INITIATED", deviceDetails, operationDbEntity, user, context)
+		    pbrp -> pbrp : createConfigDbEntity\n(deviceDetails, configDetailsMap)
+		    note left : ConfigDbEntity {}
+		    pbrp -> acdr : saveConfiguration(configDbEntity)
+			pbrp -> pbrp : createOperationDbEntity\n(deviceDetails, configDetailsMap)
+			note left: OperationDbEnityt {}
+			pbrp -> aodr : saveOperation\n(operationDbEntity)
+			pbrp -> pbrp : prepareSetConfigParams\n(deviceDetails, configDetailsMap)
+			note left: SetConfigParams {}
+			pbrp -> swf : submit workflow:\nsetDeviceConfigWorkflowClientExternal\n.start(operationId, setConfigParams)
+			pbrp -> el : logEvent("AUTO_RECONNECT_INITIATED", deviceDetails, operationDbEntity, user, context)
+		end
+end
+... ...
+group executeWorkflow
+	swf <-- workflowThread : setDeviceConfigWorkflowImpl\n.start(String opId,\n SetConfigParams setConfigParams)
+		workflowThread -> taskThread ++ : activitiesClient\n.setConfiguration(operationId,\n setConfigParams)
+		taskThread -> dcwc ++ : boolean setDeviceConfiguration\n(String opId,\n SetConfigParams setConfigParams)
+		group major processing.
+		    dcwc -> aodr : getOperationDbEntity(operationDbEntity)
+		    dcwc -> acdr : getConfigDbEntity(configDbEntity)
+		    dcwc -> nisr ++ : getDeviceDetails(serialNumber)
+			dcwc -> dor : setConfiguration(ipPortPair.getLeft(), ipPortPair.getRight(),\ndeviceDetails.getSerialNumber(), deviceDetails.getTransportSecurity(), configDetailsMap)
+			dcwc -> aodr : updateOperationDbEntity(operationDbEntity)
+			dcwc -> el : logEvent("SET_CONFIG_COMPLETED", deviceDetails, operationDbEntity, user, context)
+		end
+		dcwc -> taskThread -- : true
+		taskThread -> workflowThread -- : true
+		workflowThread -> taskThread ++ : activitiesClient\n.finalizeOperation(operationId, true)
+		taskThread -> dcwc ++ : finalizeDeviceSetConfigOperation(String opId)
+		group major processing.
+		    dcwc -> aodr : getOperationDbEntity(operationDbEntity)
+		    dcwc -> aodr : updateOperationDbEntity(operationDbEntity)
+		end
+end
+@enduml
